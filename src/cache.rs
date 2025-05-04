@@ -32,7 +32,11 @@ impl Cache {
         if let Some(max_age) = entry.max_age {
             if let Ok(elapsed) = SystemTime::now().duration_since(entry.added_time) {
                 if elapsed.as_secs() > max_age as u64 {
-                    eprintln!("Cache entry expired");
+                   println!(
+                        "Stale entry for host: {} {}",
+                        extract_header(&String::from_utf8_lossy(&entry.request), "Host").unwrap_or_default(),
+                        String::from_utf8_lossy(&entry.request).lines().next().unwrap_or_default()
+                    );
                     return None;
                 }
             }
@@ -46,7 +50,8 @@ impl Cache {
             eprintln!("Response too large to cache");
             return;
         }
-
+        let request_str = String::from_utf8_lossy(&request);
+        let response_str = String::from_utf8_lossy(&response);
         
         if let Some(header) = extract_header(&String::from_utf8_lossy(&response), "Cache-Control") {
             let directives = [
@@ -61,7 +66,7 @@ impl Cache {
                 .iter()
                 .any(|&directive| header.contains(directive))
             {
-                eprintln!("Response marked as non-cacheable");
+                eprintln!("Response marked as non-cacheable for host: {} and URI: {}", extract_header(&String::from_utf8_lossy(&request), "Host").unwrap_or_default(), request_str.lines().next().unwrap_or_default());
                 return;
             }
         }
@@ -80,6 +85,14 @@ impl Cache {
                 };
 
         if self.entries.len() >= MAX_CACHE_SIZE {
+            if let Some(evicted) = self.entries.pop_back() {
+                if let Ok(request_str) = String::from_utf8(evicted.request.clone()) {
+                    let host = extract_header(&request_str, "Host").unwrap_or_default();
+                    if let Some((method, uri)) = request_str.lines().next().unwrap_or_default().split_once(' ') {
+                        println!("Evicting {} {} from cache", host, uri);
+                    }
+                }
+            }
             self.entries.pop_back(); // evict least recently used
         }
 
