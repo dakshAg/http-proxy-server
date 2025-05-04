@@ -6,6 +6,18 @@ const MAX_CACHE_SIZE: usize = 10;
 const MAX_RESPONSE_SIZE: usize = 102400; // 100 KiB
 const MAX_REQUEST_SIZE: usize = 2000; // 2000 bytes
 
+const NO_CACHE_DIRECTIVES: [&str; 6] = [
+    "private",
+    "no-store",
+    "no-cache",
+    "max-age=0",
+    "must-revalidate",
+    "proxy-revalidate",
+];
+
+const CACHE_CONTROL_HEADER: &str = "Cache-Control";
+const HOST_HEADER: &str = "Host";
+
 #[derive(Debug, Clone)]
 pub struct CacheEntry {
     pub request: Vec<u8>,
@@ -36,7 +48,7 @@ impl Cache {
         let pos = self.entries.iter().position(|entry| entry.request == req)?;
 
         // Extract and remove the entry
-        let entry = self.entries.remove(pos).unwrap();
+        let entry = self.entries.remove(pos).expect("Failed to remove entry");
 
         // Move the entry to the front (most recently used)
         self.entries.push_front(entry.clone());
@@ -44,8 +56,8 @@ impl Cache {
         if self.is_entry_stale(&entry) {
             println!(
                 "Stale entry for host: {} {}",
-                extract_header(&request_str, "Host").unwrap_or_default(),
-                extract_request_uri(&request_str).unwrap_or_default()
+                extract_header(&request_str, HOST_HEADER).expect("Failed to extract Host"),
+                extract_request_uri(&request_str).expect("Failed to extract request URI")
             );
             return None;
         }
@@ -65,18 +77,8 @@ impl Cache {
     fn should_cache_response(&self, response: &[u8]) -> bool {
         let response_str = String::from_utf8_lossy(&response);
 
-        // Cache-Control directives that indicate non-cacheable responses
-        let directives = [
-            "private",
-            "no-store",
-            "no-cache",
-            "max-age=0",
-            "must-revalidate",
-            "proxy-revalidate",
-        ];
-
-        if let Some(header) = extract_header(&response_str, "Cache-Control") {
-            if directives
+        if let Some(header) = extract_header(&response_str, CACHE_CONTROL_HEADER) {
+            if NO_CACHE_DIRECTIVES
                 .iter()
                 .any(|&directive| header.contains(directive))
             {
@@ -95,9 +97,9 @@ impl Cache {
             eprintln!("Request too large to cache");
             return;
         }
-        
+
         let request_str = String::from_utf8_lossy(&request);
-        let host = extract_header(&request_str, "Host").unwrap_or_default();
+        let host = extract_header(&request_str, HOST_HEADER).unwrap_or_default();
         let uri = extract_request_uri(&request_str).unwrap_or_default();
         let max_age = extract_max_age(&request_str);
 
@@ -110,9 +112,9 @@ impl Cache {
         if self.entries.len() >= MAX_CACHE_SIZE {
             if let Some(evicted) = self.entries.pop_back() {
                 if let Ok(request_str) = String::from_utf8(evicted.request.clone()) {
-                    let host = extract_header(&request_str, "Host").unwrap_or_default();
+                    let host = extract_header(&request_str, HOST_HEADER).unwrap_or_default();
                     let uri = extract_request_uri(&request_str).unwrap_or_default();
-                    eprintln!("Evicting {host} {uri} from cache");
+                    println!("Evicting {host} {uri} from cache");
                 }
             }
         }
@@ -125,6 +127,6 @@ impl Cache {
         };
 
         self.entries.push_front(entry);
-        eprint!("Cache size: {}", self.entries.len());
+        eprintln!("Cache size: {}", self.entries.len());
     }
 }

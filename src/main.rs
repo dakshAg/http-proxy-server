@@ -7,6 +7,9 @@ use std::env;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 
+const HOST_HEADER: &str = "Host";
+const CONTENT_LENGTH_HEADER: &str = "Content-Length";
+
 fn handle_client(mut stream: TcpStream, cache: &mut Cache, is_cache: bool) {
     let mut buffer = [0; 1024];
 
@@ -17,8 +20,8 @@ fn handle_client(mut stream: TcpStream, cache: &mut Cache, is_cache: bool) {
     let request = buffer.to_vec();
 
     let request_str = String::from_utf8_lossy(&request);
-    let origin_server = extract_header(&request_str, "Host").unwrap_or_default();
-    let uri = extract_request_uri(&request_str).unwrap_or_default();
+    let origin_server = extract_header(&request_str, HOST_HEADER).expect("Could not extract header");
+    let uri = extract_request_uri(&request_str).expect("Could not extract URI");
 
     let last_line = request_str.lines().last().expect("No last line found");
     println!("Request tail {}", last_line);
@@ -55,7 +58,7 @@ fn handle_client(mut stream: TcpStream, cache: &mut Cache, is_cache: bool) {
     }
 
     let content_length =
-        extract_header(&request_str, "Content-Length").expect("No Content-Length found");
+        extract_header(&request_str, CONTENT_LENGTH_HEADER).expect("No Content-Length found");
     println!("Response body length {content_length}",);
     
     // Cache the response if the cache is enabled
