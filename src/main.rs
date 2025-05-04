@@ -75,9 +75,12 @@ fn main() {
 
     let mut cache = Cache::new();
 
+    // Start the server and listen for incoming connections
     let listener =
         TcpListener::bind(format!("127.0.0.1:{port}")).expect("Could not listen for connections");
     println!("Listening on {}", listener.local_addr().unwrap());
+    
+    // Accept incoming connections and handle them
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
