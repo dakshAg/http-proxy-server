@@ -1,9 +1,10 @@
-use crate::utils::extract_header;
+use crate::utils::{extract_header, extract_max_age, extract_request_uri};
 use std::collections::VecDeque;
 use std::time::SystemTime;
 
 const MAX_CACHE_SIZE: usize = 10;
 const MAX_RESPONSE_SIZE: usize = 102400; // 100 KiB
+const MAX_REQUEST_SIZE: usize = 2000; // 2000 bytes
 
 #[derive(Debug, Clone)]
 pub struct CacheEntry {
@@ -25,24 +26,64 @@ impl Cache {
     }
 
     pub fn get(&mut self, req: &[u8]) -> Option<CacheEntry> {
+        if req.len() > MAX_REQUEST_SIZE {
+            eprintln!("Request too large to cache");
+            return None;
+        }
+
+        let request_str = String::from_utf8_lossy(req);
+        // Find the entry in the cache
         let pos = self.entries.iter().position(|entry| entry.request == req)?;
-        let entry = self.entries.remove(pos).unwrap(); // remove from current position
-        self.entries.push_front(entry.clone()); // move to front (most recently used)
-        
+
+        // Extract and remove the entry
+        let entry = self.entries.remove(pos).unwrap();
+
+        // Move the entry to the front (most recently used)
+        self.entries.push_front(entry.clone());
+
+        if self.is_entry_stale(&entry) {
+            println!(
+                "Stale entry for host: {} {}",
+                extract_header(&request_str, "Host").unwrap_or_default(),
+                extract_request_uri(&request_str).unwrap_or_default()
+            );
+            return None;
+        }
+
+        Some(entry)
+    }
+
+    fn is_entry_stale(&self, entry: &CacheEntry) -> bool {
         if let Some(max_age) = entry.max_age {
             if let Ok(elapsed) = SystemTime::now().duration_since(entry.added_time) {
-                if elapsed.as_secs() > max_age as u64 {
-                   println!(
-                        "Stale entry for host: {} {}",
-                        extract_header(&String::from_utf8_lossy(&entry.request), "Host").unwrap_or_default(),
-                        String::from_utf8_lossy(&entry.request).lines().next().unwrap_or_default()
-                    );
-                    return None;
-                }
+                return elapsed.as_secs() > max_age as u64;
             }
         }
-        
-        Some(entry)
+        false
+    }
+
+    fn should_cache_response(&self, response: &[u8]) -> bool {
+        let response_str = String::from_utf8_lossy(&response);
+
+        // Cache-Control directives that indicate non-cacheable responses
+        let directives = [
+            "private",
+            "no-store",
+            "no-cache",
+            "max-age=0",
+            "must-revalidate",
+            "proxy-revalidate",
+        ];
+
+        if let Some(header) = extract_header(&response_str, "Cache-Control") {
+            if directives
+                .iter()
+                .any(|&directive| header.contains(directive))
+            {
+                return false;
+            }
+        }
+        true
     }
 
     pub fn put(&mut self, request: Vec<u8>, response: Vec<u8>) {
@@ -50,50 +91,30 @@ impl Cache {
             eprintln!("Response too large to cache");
             return;
         }
-        let request_str = String::from_utf8_lossy(&request);
-        let response_str = String::from_utf8_lossy(&response);
-        
-        if let Some(header) = extract_header(&String::from_utf8_lossy(&response), "Cache-Control") {
-            let directives = [
-                "private",
-                "no-store",
-                "no-cache",
-                "max-age=0",
-                "must-revalidate",
-                "proxy-revalidate",
-            ];
-            if directives
-                .iter()
-                .any(|&directive| header.contains(directive))
-            {
-                eprintln!("Response marked as non-cacheable for host: {} and URI: {}", extract_header(&String::from_utf8_lossy(&request), "Host").unwrap_or_default(), request_str.lines().next().unwrap_or_default());
-                return;
-            }
+        if request.len() > MAX_REQUEST_SIZE {
+            eprintln!("Request too large to cache");
+            return;
         }
         
-        let max_age = if let Some(header) = extract_header(&String::from_utf8_lossy(&response), "Cache-Control") {
-                    if let Some(pos) = header.find("max-age=") {
-                        header[pos + 8..]
-                            .split(',')
-                            .next()
-                            .and_then(|v| v.trim().parse::<u32>().ok())
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                };
+        let request_str = String::from_utf8_lossy(&request);
+        let host = extract_header(&request_str, "Host").unwrap_or_default();
+        let uri = extract_request_uri(&request_str).unwrap_or_default();
+        let max_age = extract_max_age(&request_str);
 
+        if !self.should_cache_response(&response) {
+            eprintln!("Response marked as non-cacheable for host: {host} and URI: {uri}");
+            return;
+        }
+
+        // Check if the cache is full
         if self.entries.len() >= MAX_CACHE_SIZE {
             if let Some(evicted) = self.entries.pop_back() {
                 if let Ok(request_str) = String::from_utf8(evicted.request.clone()) {
                     let host = extract_header(&request_str, "Host").unwrap_or_default();
-                    if let Some((method, uri)) = request_str.lines().next().unwrap_or_default().split_once(' ') {
-                        println!("Evicting {} {} from cache", host, uri);
-                    }
+                    let uri = extract_request_uri(&request_str).unwrap_or_default();
+                    eprintln!("Evicting {host} {uri} from cache");
                 }
             }
-            self.entries.pop_back(); // evict least recently used
         }
 
         let entry = CacheEntry {

@@ -2,7 +2,7 @@ mod cache;
 mod utils;
 
 use crate::cache::Cache;
-use crate::utils::extract_header;
+use crate::utils::{extract_header, extract_request_uri};
 use std::env;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -18,27 +18,17 @@ fn handle_client(mut stream: TcpStream, cache: &mut Cache, is_cache: bool) {
 
     let request_str = String::from_utf8_lossy(&request);
     let origin_server = extract_header(&request_str, "Host").unwrap_or_default();
+    let uri = extract_request_uri(&request_str).unwrap_or_default();
 
-    if let Some(last_line) = request_str.lines().last() {
-        println!("Request tail {}", last_line);
-    }
-    
-    let mut urix = String::new();
-    let request_line = request_str.lines().next().unwrap_or_default();
-    if let Some((method, uri)) = request_line.split_once(' ') {
-        if method == "GET" {
-            println!("GETting {} {}", origin_server, uri);
-            urix = uri.to_string(); // Save `uri` for later use
-        }
-    }
+    let last_line = request_str.lines().last().expect("No last line found");
+    println!("Request tail {}", last_line);
+
+    println!("GETting {} {}", origin_server, uri);
 
     // Check if the response is in the cache
     if is_cache {
         if let Some(entry) = cache.get(&request) {
-            println!(
-                "Serving {} {} from cache",
-                origin_server, urix
-            );
+            println!("Serving {origin_server} {uri} from cache");
             stream
                 .write_all(&entry.response)
                 .expect("Could not write cached response to stream");
@@ -46,12 +36,14 @@ fn handle_client(mut stream: TcpStream, cache: &mut Cache, is_cache: bool) {
         }
     }
 
+    // If not in cache, connect to the origin server and write the request
     let mut server_stream = TcpStream::connect(format!("{origin_server}:80")).unwrap();
     server_stream.write_all(&request).unwrap();
 
     let mut server_buffer = Vec::new();
     let mut temp_buffer = [0; 1024];
 
+    // Read the response from the server and write it to the client stream
     while let Ok(bytes_read) = server_stream.read(&mut temp_buffer) {
         if bytes_read == 0 {
             break; // Connection closed
@@ -62,11 +54,11 @@ fn handle_client(mut stream: TcpStream, cache: &mut Cache, is_cache: bool) {
             .expect("Could not write to stream");
     }
 
-    let content_length = extract_header(&request_str, "Content-Length");
-    println!(
-        "Response body length {}",
-        content_length.unwrap_or_default()
-    );
+    let content_length =
+        extract_header(&request_str, "Content-Length").expect("No Content-Length found");
+    println!("Response body length {content_length}",);
+    
+    // Cache the response if the cache is enabled
     if is_cache {
         cache.put(request, server_buffer.clone());
     }
