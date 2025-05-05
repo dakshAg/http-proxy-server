@@ -3,5 +3,5 @@
 version = 4
 
 [[package]]
-name = "compsys-p2"
+name = "htproxy"
 version = "0.1.0"

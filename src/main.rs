@@ -1,18 +1,11 @@
-mod cache;
-mod utils;
-
 //use crate::cache::Cache;
 use std::env;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 
-
-
 fn main() {
     let args: Vec<String> = env::args().collect();
     let port = &args[2];
-
-    let is_cache = args.contains(&String::from("-c"));
 
     // Start the server and listen for incoming connections
     let listener =
@@ -22,24 +15,24 @@ fn main() {
     // Accept incoming connections and handle them
     for stream in listener.incoming() {
         match stream {
-            Ok(stream) => {
+            Ok(mut stream) => {
                 println!("Accepted");
-               
+
                 let mut buffer = [0; 1024];
 
                 stream
                     .read(&mut buffer)
                     .expect("Could not read from stream");
-                
+
                 let request = buffer.to_vec();
-            
+
                 let request_str = String::from_utf8_lossy(&request);
 
                 let origin_server =
                     extract_header(&request_str, "host").expect("Could not extract header");
 
                 let uri = extract_request_uri(&request_str).expect("Could not extract URI");
-                
+
                 let last_line = request_str.lines().last().expect("No last line found");
                 println!("Request tail {}", last_line);
 
@@ -62,10 +55,11 @@ fn main() {
                         .write_all(&temp_buffer[..bytes_read])
                         .expect("Could not write to stream");
                 }
-               
+
                 let response_str = String::from_utf8_lossy(&server_buffer);
-               
-                let content_length = extract_header(&response_str, "content-length" ).expect("No Content-Length found");
+
+                let content_length = extract_header(&response_str, "content-length")
+                    .expect("No Content-Length found");
 
                 println!("Response body length {content_length}");
             }
@@ -93,4 +87,3 @@ pub fn extract_request_uri(request: &str) -> Option<String> {
     }
     Some(parts[1].to_string())
 }
-
