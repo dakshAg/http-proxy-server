@@ -1,16 +1,16 @@
-# Makefile for the Rust project
+# Makefile for the Rust project without Cargo
 
 # Variables
-CARGO := cargo
+RUSTC := rustc
 TARGET := htproxy
+SRC := src/main.rs
 
 # Default target
 all: build
 
 # Build the project
 build:
-	$(CARGO) build --release
-	cp target/release/$(TARGET) .
+	$(RUSTC) $(SRC) -o $(TARGET)
 
 # Run the project
 run: build
@@ -18,15 +18,6 @@ run: build
 
 # Clean the project
 clean:
-	$(CARGO) clean
 	rm -f $(TARGET)
 
-# Format the code
-format:
-	$(CARGO) fmt
-
-# Check for linting issues
-lint:
-	$(CARGO) clippy -- -D warnings
-
-.PHONY: all build run clean format lint
+.PHONY: all build run clean
