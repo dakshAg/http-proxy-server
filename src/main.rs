@@ -20,7 +20,8 @@ fn handle_client(mut stream: TcpStream, cache: &mut Cache, is_cache: bool) {
     let request = buffer.to_vec();
 
     let request_str = String::from_utf8_lossy(&request);
-    let origin_server = extract_header(&request_str, HOST_HEADER).expect("Could not extract header");
+    let origin_server =
+        extract_header(&request_str, HOST_HEADER).expect("Could not extract header");
     let uri = extract_request_uri(&request_str).expect("Could not extract URI");
 
     let last_line = request_str.lines().last().expect("No last line found");
@@ -57,10 +58,12 @@ fn handle_client(mut stream: TcpStream, cache: &mut Cache, is_cache: bool) {
             .expect("Could not write to stream");
     }
 
+    let response_str = String::from_utf8_lossy(&server_buffer);
+
     let content_length =
-        extract_header(&request_str, CONTENT_LENGTH_HEADER).expect("No Content-Length found");
-    println!("Response body length {content_length}",);
-    
+        extract_header(&response_str, CONTENT_LENGTH_HEADER).expect("No Content-Length found");
+    println!("Response body length {content_length}");
+
     // Cache the response if the cache is enabled
     if is_cache {
         cache.put(request, server_buffer.clone());
@@ -79,7 +82,7 @@ fn main() {
     let listener =
         TcpListener::bind(format!("127.0.0.1:{port}")).expect("Could not listen for connections");
     println!("Listening on {}", listener.local_addr().unwrap());
-    
+
     // Accept incoming connections and handle them
     for stream in listener.incoming() {
         match stream {

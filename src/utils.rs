@@ -1,5 +1,6 @@
 pub fn extract_header(request: &str, header: &str) -> Option<String> {
-    let header = format!("{header}: ");
+    let header = format!("{}: ", header.to_lowercase());
+    let request = request.to_lowercase();
     let start = request.find(&header)?;
     let end = request[start..].find("\r\n")?;
     Some(request[start + header.len()..start + end].to_string())
