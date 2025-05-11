@@ -1,11 +1,16 @@
-//use crate::cache::Cache;
 use std::env;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 
+mod cache;
+use crate::cache::Cache;
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     let port = &args[2];
+
+    let is_cache = args.contains(&String::from("-c"));
+    let mut cache = Cache::new();
 
     // Start the server and listen for incoming connections
     let listener =
@@ -38,6 +43,17 @@ fn main() {
 
                 println!("GETting {} {}", origin_server, uri);
 
+                // Check if the response is in the cache
+                if is_cache {
+                    if let Some(entry) = cache.get(&request) {
+                        println!("Serving {origin_server} {uri} from cache");
+                        stream
+                            .write_all(&entry.response)
+                            .expect("Could not write cached response to stream");
+                        return;
+                    }
+                }
+
                 let mut server_stream = TcpStream::connect(format!("{origin_server}:80")).unwrap();
                 server_stream.write_all(&request).unwrap();
 
@@ -62,6 +78,11 @@ fn main() {
                     .expect("No Content-Length found");
 
                 println!("Response body length {content_length}");
+                
+                // Cache the response if the cache is enabled
+                if is_cache {
+                    cache.put(request, server_buffer.clone());
+                }
             }
 
             Err(e) => {
