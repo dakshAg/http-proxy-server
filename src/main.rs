@@ -1,11 +1,11 @@
-mod utils;
 mod cache;
+mod utils;
 
+use crate::cache::Cache;
+use crate::utils::{extract_header, extract_request_uri};
 use std::env;
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream, Shutdown};
-use crate::utils::{extract_header, extract_request_uri};
-use crate::cache::{Cache};
+use std::net::{Shutdown, TcpListener, TcpStream};
 
 fn handle_client(mut stream: TcpStream, cache: &mut Cache, is_cache: bool) {
     println!("Accepted");
@@ -27,8 +27,7 @@ fn handle_client(mut stream: TcpStream, cache: &mut Cache, is_cache: bool) {
     let request = buffer.clone();
     let request_str = String::from_utf8_lossy(&request);
 
-    let origin_server =
-        extract_header(&request_str, "host").expect("Could not extract header");
+    let origin_server = extract_header(&request_str, "host").expect("Could not extract header");
 
     let uri = extract_request_uri(&request_str).expect("Could not extract URI");
 
@@ -44,14 +43,15 @@ fn handle_client(mut stream: TcpStream, cache: &mut Cache, is_cache: bool) {
             stream
                 .write_all(&entry.response)
                 .expect("Could not write cached response to stream");
+            stream.shutdown(Shutdown::Both).ok();
             return;
         }
     }
 
     println!("GETting {} {}", origin_server, uri);
 
-    let mut server_stream = TcpStream::connect(format!("{origin_server}:80"))
-        .expect("Could not connect to server");
+    let mut server_stream =
+        TcpStream::connect(format!("{origin_server}:80")).expect("Could not connect to server");
     server_stream.write_all(&request).unwrap();
 
     // Read the response headers from the server
@@ -63,7 +63,9 @@ fn handle_client(mut stream: TcpStream, cache: &mut Cache, is_cache: bool) {
             break;
         }
         response_headers.push(byte[0]);
-        if response_headers.len() >= 4 && &response_headers[response_headers.len()-4..] == b"\r\n\r\n" {
+        if response_headers.len() >= 4
+            && &response_headers[response_headers.len() - 4..] == b"\r\n\r\n"
+        {
             header_end = Some(response_headers.len());
         }
     }
@@ -72,12 +74,12 @@ fn handle_client(mut stream: TcpStream, cache: &mut Cache, is_cache: bool) {
     let content_length = extract_header(&response_str, "content-length")
         .and_then(|s| s.trim().parse::<usize>().ok())
         .unwrap_or(0);
-    
+
     // Read the response body from the server and write it to the client stream
     let mut total_read = 0;
     let mut temp_buffer = [0; 1024];
     let mut server_buffer = Vec::new();
-    
+
     while total_read < content_length {
         let to_read = std::cmp::min(1024, content_length - total_read);
         let bytes_read = server_stream.read(&mut temp_buffer[..to_read]).unwrap_or(0);
@@ -90,7 +92,10 @@ fn handle_client(mut stream: TcpStream, cache: &mut Cache, is_cache: bool) {
     }
     println!("Response body length {}", content_length);
     if is_cache {
-        cache.put(request, server_buffer.clone());
+        // Store the full response (headers + body) in the cache
+        let mut full_response = response_headers.clone();
+        full_response.extend_from_slice(&server_buffer);
+        cache.put(request, full_response);
     }
     stream.shutdown(Shutdown::Both).ok();
 }
