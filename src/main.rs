@@ -1,110 +1,121 @@
+mod utils;
+mod cache;
+
 use std::env;
 use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::{TcpListener, TcpStream, Shutdown};
+use crate::utils::{extract_header, extract_request_uri};
+use crate::cache::{Cache};
 
-mod cache;
-use crate::cache::Cache;
+fn handle_client(mut stream: TcpStream, cache: &mut Cache, is_cache: bool) {
+    println!("Accepted");
 
+    let mut buffer = Vec::new();
+    let mut temp = [0; 1024];
+
+    loop {
+        let n = stream.read(&mut temp).expect("Could not read from stream");
+        if n == 0 {
+            break;
+        }
+        buffer.extend_from_slice(&temp[..n]);
+        if buffer.windows(4).any(|w| w == b"\r\n\r\n") {
+            break;
+        }
+    }
+
+    let request = buffer.clone();
+    let request_str = String::from_utf8_lossy(&request);
+
+    let origin_server =
+        extract_header(&request_str, "host").expect("Could not extract header");
+
+    let uri = extract_request_uri(&request_str).expect("Could not extract URI");
+
+    // Only consider the header part (before \r\n\r\n)
+    let header_end_pos = request_str.find("\r\n\r\n").unwrap_or(request_str.len());
+    let header_section = &request_str[..header_end_pos];
+    let last_header_line = header_section.lines().last().unwrap_or("");
+    println!("Request tail {}", last_header_line);
+
+    if is_cache {
+        if let Some(entry) = cache.get(&request) {
+            println!("Serving {origin_server} {uri} from cache");
+            stream
+                .write_all(&entry.response)
+                .expect("Could not write cached response to stream");
+            return;
+        }
+    }
+
+    println!("GETting {} {}", origin_server, uri);
+
+    let mut server_stream = TcpStream::connect(format!("{origin_server}:80"))
+        .expect("Could not connect to server");
+    server_stream.write_all(&request).unwrap();
+
+    // Read the response headers from the server
+    let mut response_headers = Vec::new();
+    let mut header_end = None;
+    while header_end.is_none() {
+        let mut byte = [0; 1];
+        if server_stream.read(&mut byte).unwrap_or(0) == 0 {
+            break;
+        }
+        response_headers.push(byte[0]);
+        if response_headers.len() >= 4 && &response_headers[response_headers.len()-4..] == b"\r\n\r\n" {
+            header_end = Some(response_headers.len());
+        }
+    }
+    stream.write_all(&response_headers).unwrap();
+    let response_str = String::from_utf8_lossy(&response_headers);
+    let content_length = extract_header(&response_str, "content-length")
+        .and_then(|s| s.trim().parse::<usize>().ok())
+        .unwrap_or(0);
+    
+    // Read the response body from the server and write it to the client stream
+    let mut total_read = 0;
+    let mut temp_buffer = [0; 1024];
+    let mut server_buffer = Vec::new();
+    
+    while total_read < content_length {
+        let to_read = std::cmp::min(1024, content_length - total_read);
+        let bytes_read = server_stream.read(&mut temp_buffer[..to_read]).unwrap_or(0);
+        if bytes_read == 0 {
+            break;
+        }
+        server_buffer.extend_from_slice(&temp_buffer[..bytes_read]);
+        stream.write_all(&temp_buffer[..bytes_read]).unwrap();
+        total_read += bytes_read;
+    }
+    println!("Response body length {}", content_length);
+    if is_cache {
+        cache.put(request, server_buffer.clone());
+    }
+    stream.shutdown(Shutdown::Both).ok();
+}
 fn main() {
     let args: Vec<String> = env::args().collect();
     let port = &args[2];
 
     let is_cache = args.contains(&String::from("-c"));
+
     let mut cache = Cache::new();
 
     // Start the server and listen for incoming connections
     let listener =
-        TcpListener::bind(format!("127.0.0.1:{port}")).expect("Could not listen for connections");
-    println!("Listening on {}", listener.local_addr().unwrap());
+        TcpListener::bind(format!("[::]:{port}")).expect("Could not listen for connections");
 
     // Accept incoming connections and handle them
     for stream in listener.incoming() {
         match stream {
-            Ok(mut stream) => {
-                println!("Accepted");
-
-                let mut buffer = [0; 1024];
-
-                stream
-                    .read(&mut buffer)
-                    .expect("Could not read from stream");
-
-                let request = buffer.to_vec();
-
-                let request_str = String::from_utf8_lossy(&request);
-
-                let origin_server =
-                    extract_header(&request_str, "host").expect("Could not extract header");
-
-                let uri = extract_request_uri(&request_str).expect("Could not extract URI");
-
-                let last_line = request_str.lines().last().expect("No last line found");
-                println!("Request tail {}", last_line);
-
-                println!("GETting {} {}", origin_server, uri);
-
-                // Check if the response is in the cache
-                if is_cache {
-                    if let Some(entry) = cache.get(&request) {
-                        println!("Serving {origin_server} {uri} from cache");
-                        stream
-                            .write_all(&entry.response)
-                            .expect("Could not write cached response to stream");
-                        return;
-                    }
-                }
-
-                let mut server_stream = TcpStream::connect(format!("{origin_server}:80")).unwrap();
-                server_stream.write_all(&request).unwrap();
-
-                let mut server_buffer = Vec::new();
-
-                let mut temp_buffer = [0; 1024];
-
-                // Read the response from the server and write it to the client stream
-                while let Ok(bytes_read) = server_stream.read(&mut temp_buffer) {
-                    if bytes_read == 0 {
-                        break; // Connection closed
-                    }
-                    server_buffer.extend_from_slice(&temp_buffer[..bytes_read]);
-                    stream
-                        .write_all(&temp_buffer[..bytes_read])
-                        .expect("Could not write to stream");
-                }
-
-                let response_str = String::from_utf8_lossy(&server_buffer);
-
-                let content_length = extract_header(&response_str, "content-length")
-                    .expect("No Content-Length found");
-
-                println!("Response body length {content_length}");
-                
-                // Cache the response if the cache is enabled
-                if is_cache {
-                    cache.put(request, server_buffer.clone());
-                }
+            Ok(stream) => {
+                // Process each connection sequentially (no threads)
+                handle_client(stream, &mut cache, is_cache);
             }
-
             Err(e) => {
                 eprintln!("Error: {}", e);
             }
         }
     }
-}
-
-pub fn extract_header(request: &str, header: &str) -> Option<String> {
-    let header = format!("{}: ", header.to_lowercase());
-    let request = request.to_lowercase();
-    let start = request.find(&header)?;
-    let end = request[start..].find("\r\n")?;
-    Some(request[start + header.len()..start + end].to_string())
-}
-
-pub fn extract_request_uri(request: &str) -> Option<String> {
-    let request_line = request.lines().next()?;
-    let parts: Vec<&str> = request_line.split_whitespace().collect();
-    if parts.len() < 2 {
-        return None;
-    }
-    Some(parts[1].to_string())
 }
