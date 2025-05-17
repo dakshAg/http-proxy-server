@@ -51,7 +51,13 @@ impl Cache {
             return;
         }
 
-        // Check if the cache is full
+        let entry = CacheEntry { request, response };
+
+        self.entries.push_front(entry);
+        eprintln!("Cache size: {}", self.entries.len());
+    }
+
+    pub fn evict_if_full(&mut self) {
         if self.entries.len() >= MAX_CACHE_SIZE {
             if let Some(evicted) = self.entries.pop_back() {
                 if let Ok(request_str) = String::from_utf8(evicted.request.clone()) {
@@ -61,13 +67,5 @@ impl Cache {
                 }
             }
         }
-
-        let entry = CacheEntry {
-            request,
-            response
-        };
-
-        self.entries.push_front(entry);
-        eprintln!("Cache size: {}", self.entries.len());
     }
 }

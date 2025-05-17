@@ -45,6 +45,8 @@ fn handle_client(mut stream: TcpStream, cache: &mut Cache, is_cache: bool) {
                 .expect("Could not write cached response to stream");
             stream.shutdown(Shutdown::Both).ok();
             return;
+        }else{
+            cache.evict_if_full();
         }
     }
 
