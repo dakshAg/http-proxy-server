@@ -1,4 +1,4 @@
-# compsys-p2: HTTP Proxy Server in Rust
+# HTTP Proxy Server in Rust (COMP30023 Computer Systems Project 2)
 
 ## Overview
 
